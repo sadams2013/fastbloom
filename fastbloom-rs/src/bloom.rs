@@ -5,6 +5,8 @@ use std::ptr::slice_from_raw_parts;
 use fastmurmur3::murmur3_x64_128;
 use xxhash_rust::xxh3::xxh3_64_with_seed;
 
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+
 use crate::{Deletable, Hashes, Membership};
 use crate::builder::FilterBuilder;
 use crate::vec::{BloomBitVec, CountingVec};
@@ -489,6 +491,28 @@ impl CountingBloomFilter {
     /// Get the underlying counter at index.
     pub fn counter_at(&self, index: u64) -> usize {
         self.counting_vec.get(index as usize)
+    }
+}
+
+impl CountingBloomFilter {
+
+    pub fn add_many(&mut self, elements: &[&[u8]]) {
+
+        let m = self.config().size;
+
+        let hash_vec = elements.par_iter().map(|element| {
+            let hash1 = xxh3_64_with_seed(element, 0) % m;
+            let hash2 = xxh3_64_with_seed(element, 32) % m;
+            (hash1, hash2)
+        }).collect::<Vec<(u64, u64)>>();
+
+        hash_vec.into_iter().for_each(|(hash1, hash2)| {
+            for i in 1..self.config().hashes as u64 {
+                let mo = ((hash1 + i * hash2) % m) as usize;
+                self.counting_vec.increment(mo);
+            };
+            self.counting_vec.increment(hash1 as usize);
+        });
     }
 }
 
